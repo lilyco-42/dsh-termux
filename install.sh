@@ -141,21 +141,25 @@ PY
 fi
 
 log 7 7 "Setting DeepSeek API key..."
-# For headless/web use, dsh needs a DEEPSEEK_API_KEY. Auto-scan for an
-# existing key first (env, dsh's credential store, shell rc files, standalone
-# files); only prompt when none is found.
-if PERSIST_KEY="$(find_deepseek_key)"; then
-    echo "    Found existing DeepSeek API key, using it."
-    export DEEPSEEK_API_KEY="$PERSIST_KEY"
+PERSIST_KEY=""
+if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+    echo "    DEEPSEEK_API_KEY already set in environment, using it."
+    PERSIST_KEY="$DEEPSEEK_API_KEY"
 else
-    printf '    No existing key found. Paste your DeepSeek API key now (input hidden; press Enter to skip): '
+    printf '    Paste your DeepSeek API key (input hidden): '
     IFS= read -r -s PERSIST_KEY || true
     echo
     if [ -n "$PERSIST_KEY" ]; then
-        export DEEPSEEK_API_KEY="$PERSIST_KEY"
         echo "    Key captured (not echoed)."
+        export DEEPSEEK_API_KEY="$PERSIST_KEY"
     else
-        echo "    No key provided; set it later with: export DEEPSEEK_API_KEY=sk-..."
+        # No input: fall back to scanning for an existing key.
+        if PERSIST_KEY="$(find_deepseek_key)"; then
+            echo "    Found existing DeepSeek API key, using it."
+            export DEEPSEEK_API_KEY="$PERSIST_KEY"
+        else
+            echo "    No key provided; set it later with: export DEEPSEEK_API_KEY=sk-..."
+        fi
     fi
 fi
 if [ -n "${PERSIST_KEY:-}" ]; then

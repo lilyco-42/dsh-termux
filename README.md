@@ -55,14 +55,15 @@ web UI's Models page).
 4. Builds `sharp` against the system `libvips`.
 5. Patches `session-persistence-jsonl` to use `rename()` instead of `link()`.
 6. Rewrites the `dsh` shebang to `node --expose-internals`.
-7. Auto-detects an existing `DEEPSEEK_API_KEY` (env, `~/.dsh/.credentials.yaml`,
-   shell rc files, `~/.deepseek_api_key`), prompts only if none is found, and
-   saves the key to `~/.bashrc`.
+7. Prompts you to paste your `DEEPSEEK_API_KEY` (input hidden), saves it to
+   `~/.bashrc`, and exports it for the current shell. If you press Enter with
+   nothing, it falls back to scanning for an existing key (env, dsh's
+   credentials store, shell rc files).
 
 All post-install patches are idempotent, so re-running `install.sh` is safe.
 
 To set the key non-interactively (e.g. when piping the script), pass it in the
-environment, or let the script scan for one you already have:
+environment; interactively, the script just asks you to paste it:
 
 ```bash
 DEEPSEEK_API_KEY=sk-... bash install.sh
