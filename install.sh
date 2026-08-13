@@ -20,10 +20,10 @@ DSH_LIB="$(npm root -g)/@deepseek-ai/dsh"
 
 log() { printf '\033[1;36m[%s/%s]\033[0m %s\n' "$1" "$2" "$3"; }
 
-log 1 6 "Installing prerequisites..."
+log 1 7 "Installing prerequisites..."
 pkg install -y nodejs build-essential clang cmake ninja python libvips >/dev/null
 
-log 2 6 "Patching node-gyp (drop bogus OS=android)..."
+log 2 7 "Patching node-gyp (drop bogus OS=android)..."
 CREATE_GYPI="$(npm root -g)/npm/node_modules/node-gyp/lib/create-config-gypi.js"
 if [ ! -f "$CREATE_GYPI" ]; then
     echo "error: node-gyp not found at $CREATE_GYPI" >&2
@@ -52,12 +52,12 @@ print("    patched", path)
 PY
 fi
 
-log 3 6 "Installing @deepseek-ai/dsh (native modules will be compiled)..."
+log 3 7 "Installing @deepseek-ai/dsh (native modules will be compiled)..."
 export CFLAGS="--target=$NDK_TARGET"
 export CXXFLAGS="--target=$NDK_TARGET"
 npm install -g @deepseek-ai/dsh
 
-log 4 6 "Building sharp against system libvips..."
+log 4 7 "Building sharp against system libvips..."
 SHARP_DIR="$DSH_LIB/node_modules/sharp"
 if [ -f "$SHARP_DIR/src/build/Release/sharp-android-arm64-"*.node ]; then
     echo "    sharp already built, skipping."
@@ -67,7 +67,7 @@ else
         "$NODE_BIN" "$NODE_GYP_BIN" rebuild --directory=src >/dev/null)
 fi
 
-log 5 6 "Patching session persistence (hard link -> rename)..."
+log 5 7 "Patching session persistence (hard link -> rename)..."
 SESSION_JS="$DSH_LIB/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js"
 if [ -f "$SESSION_JS" ]; then
     if grep -q "await rename(tmp, finalPath)" "$SESSION_JS"; then
@@ -93,7 +93,7 @@ else
     echo "    warning: session persistence module not found, skipping."
 fi
 
-log 6 6 "Fixing shebang (node --expose-internals)..."
+log 6 7 "Fixing shebang (node --expose-internals)..."
 DSH_BIN="$DSH_LIB/lib/bin.js"
 if [ -f "$DSH_BIN" ]; then
     python3 - "$DSH_BIN" "$NODE_BIN" <<'PY'
@@ -107,6 +107,30 @@ src = "#!" + node + " --expose-internals\n" + rest
 open(path, "w", encoding="utf-8").write(src)
 print("    shebang set:", node, "--expose-internals")
 PY
+fi
+
+log 7 7 "Setting DeepSeek API key..."
+if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+    echo "    DEEPSEEK_API_KEY already set in environment, using it."
+    PERSIST_KEY="$DEEPSEEK_API_KEY"
+else
+    printf '    Paste your DeepSeek API key (input hidden; press Enter to skip): '
+    IFS= read -r -s PERSIST_KEY || true
+    echo
+    if [ -n "$PERSIST_KEY" ]; then
+        export DEEPSEEK_API_KEY="$PERSIST_KEY"
+        echo "    Key captured (not echoed)."
+    else
+        echo "    No key provided; set it later with: export DEEPSEEK_API_KEY=sk-..."
+    fi
+fi
+if [ -n "${PERSIST_KEY:-}" ]; then
+    RC="$HOME/.bashrc"
+    touch "$RC"
+    grep -v '^export DEEPSEEK_API_KEY=' "$RC" > "$RC.tmp" 2>/dev/null || true
+    printf "export DEEPSEEK_API_KEY='%s'\n" "$PERSIST_KEY" >> "$RC.tmp"
+    mv "$RC.tmp" "$RC"
+    echo "    Saved DEEPSEEK_API_KEY to $RC"
 fi
 
 printf '\n\033[1;32mDone.\033[0m Verify with:\n  dsh --version\n  dsh web\n'
