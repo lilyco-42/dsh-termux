@@ -20,6 +20,37 @@ DSH_LIB="$(npm root -g)/@deepseek-ai/dsh"
 
 log() { printf '\033[1;36m[%s/%s]\033[0m %s\n' "$1" "$2" "$3"; }
 
+# Auto-scan for a DeepSeek API key across common sources and print the first
+# match. Priority: environment, dsh's credential store, shell rc files, then
+# standalone key files. Prints nothing and returns 1 when no key is found.
+find_deepseek_key() {
+    local key f creds
+    if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+        printf '%s' "$DEEPSEEK_API_KEY"; return 0
+    fi
+    creds="${DSH_HOME:-$HOME/.dsh}/.credentials.yaml"
+    if [ -f "$creds" ]; then
+        key="$(grep -E 'DEEPSEEK_API_KEY[[:space:]]*:' "$creds" | head -1 \
+            | sed -E 's/.*DEEPSEEK_API_KEY[[:space:]]*:[[:space:]]*//' | tr -d " \t\r")"
+        key="${key#\"}"; key="${key%\"}"; key="${key#\'}"; key="${key%\'}"
+        [ -n "$key" ] && { printf '%s' "$key"; return 0; }
+    fi
+    for f in "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zshrc"; do
+        [ -f "$f" ] || continue
+        key="$(grep -E '^[[:space:]]*export[[:space:]]+DEEPSEEK_API_KEY=' "$f" | head -1 \
+            | sed -E 's/^[[:space:]]*export[[:space:]]+DEEPSEEK_API_KEY=//' | tr -d " \t\r")"
+        key="${key#\"}"; key="${key%\"}"; key="${key#\'}"; key="${key%\'}"
+        [ -n "$key" ] && { printf '%s' "$key"; return 0; }
+    done
+    for f in "$HOME/.deepseek_api_key" "$HOME/.deepseek"; do
+        [ -f "$f" ] || continue
+        key="$(head -1 "$f" | tr -d " \t\r\n")"
+        key="${key#\"}"; key="${key%\"}"; key="${key#\'}"; key="${key%\'}"
+        [ -n "$key" ] && { printf '%s' "$key"; return 0; }
+    done
+    return 1
+}
+
 log 1 7 "Installing prerequisites..."
 pkg install -y nodejs build-essential clang cmake ninja python libvips >/dev/null
 
@@ -110,11 +141,14 @@ PY
 fi
 
 log 7 7 "Setting DeepSeek API key..."
-if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
-    echo "    DEEPSEEK_API_KEY already set in environment, using it."
-    PERSIST_KEY="$DEEPSEEK_API_KEY"
+# For headless/web use, dsh needs a DEEPSEEK_API_KEY. Auto-scan for an
+# existing key first (env, dsh's credential store, shell rc files, standalone
+# files); only prompt when none is found.
+if PERSIST_KEY="$(find_deepseek_key)"; then
+    echo "    Found existing DeepSeek API key, using it."
+    export DEEPSEEK_API_KEY="$PERSIST_KEY"
 else
-    printf '    Paste your DeepSeek API key (input hidden; press Enter to skip): '
+    printf '    No existing key found. Paste your DeepSeek API key now (input hidden; press Enter to skip): '
     IFS= read -r -s PERSIST_KEY || true
     echo
     if [ -n "$PERSIST_KEY" ]; then
