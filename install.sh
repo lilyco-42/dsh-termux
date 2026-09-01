@@ -14,9 +14,10 @@
 set -euo pipefail
 
 NDK_TARGET="aarch64-unknown-linux-android30"
-NODE_BIN="$(command -v node)"
-NODE_GYP_BIN="$(npm root -g)/npm/node_modules/node-gyp/bin/node-gyp.js"
-DSH_LIB="$(npm root -g)/@deepseek-ai/dsh"
+# NODE_BIN / NODE_GYP_BIN / DSH_LIB are resolved AFTER the `pkg install` below:
+# on a fresh Termux device `node`/`npm` don't exist yet, so computing them up
+#here leaves NODE_BIN empty and `set -e` makes the script silently exit (nothing
+#installed, no error message) before the installer even runs.
 
 log() { printf '\033[1;36m[%s/%s]\033[0m %s\n' "$1" "$2" "$3"; }
 
@@ -53,6 +54,25 @@ find_deepseek_key() {
 
 log 1 7 "Installing prerequisites..."
 pkg install -y nodejs build-essential clang cmake ninja python libvips >/dev/null
+
+# Resolve Node/npm paths only now that nodejs is installed — before, on a
+# fresh device, `command -v node` would be empty, making node-gyp rebuild and
+# the shebang patch silently use an empty "" (or `set -e` would silently exit).
+# Fail loudly if Node/npm still aren't available instead of crashing silently.
+if ! NODE_BIN="$(command -v node)"; then
+    echo "error: 'node' not found after 'pkg install -y nodejs'; NODE_BIN is empty" >&2
+    exit 1
+fi
+if [ -z "$NODE_BIN" ]; then
+    echo "error: 'node' resolves to an empty path after 'pkg install -y nodejs'" >&2
+    exit 1
+fi
+NODE_GYP_BIN="$(npm root -g)/npm/node_modules/node-gyp/bin/node-gyp.js"
+DSH_LIB="$(npm root -g)/@deepseek-ai/dsh"
+if [ ! -f "$NODE_GYP_BIN" ]; then
+    echo "error: node-gyp not found at $NODE_GYP_BIN (did 'pkg install -y nodejs' succeed?)" >&2
+    exit 1
+fi
 
 log 2 7 "Patching node-gyp (drop bogus OS=android)..."
 CREATE_GYPI="$(npm root -g)/npm/node_modules/node-gyp/lib/create-config-gypi.js"
