@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200" font-family="system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#131a10"/><stop offset="1" stop-color="#1a2e05"/>
+    </linearGradient>
+    <linearGradient id="ac" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#84cc16"/><stop offset="1" stop-color="#a3e635"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="200" fill="url(#bg)"/>
+  <circle cx="540" cy="30" r="80" fill="#84cc16" opacity="0.08"/>
+  <text x="552" y="164" font-size="84" font-weight="700" fill="#84cc16" opacity="0.30" text-anchor="end" font-family="Consolas,monospace">#_</text>
+  <rect x="0" y="0" width="6" height="200" fill="url(#ac)"/>
+  <rect x="36" y="46" height="34" rx="17" width="150" fill="#84cc16" opacity="0.14" stroke="#84cc16"/>
+  <text x="111" y="69" font-size="15" fill="#a3e635" text-anchor="middle">Shell · ★10</text>
+  <text x="36" y="126" font-size="36" font-weight="700" fill="#f8fafc">dsh-termux</text>
+  <text x="36" y="158" font-size="17" fill="#a3e635">Android Termux 一键安装 DeepSeek Harness（含 5 项运行时补丁）</text>
+</svg>
