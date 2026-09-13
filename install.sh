@@ -119,7 +119,7 @@ npm install -g @deepseek-ai/dsh
 
 log 4 9 "Building sharp against system libvips..."
 SHARP_DIR="$DSH_LIB/node_modules/sharp"
-if [ -f "$SHARP_DIR/src/build/Release/sharp-android-arm64-"*.node ]; then
+if compgen -G "$SHARP_DIR/src/build/Release/sharp-android-arm64-*.node" >/dev/null; then
     echo "    sharp already built, skipping."
 else
     (cd "$SHARP_DIR" && SHARP_FORCE_GLOBAL_LIBVIPS=1 \
