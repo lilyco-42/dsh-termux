@@ -10,6 +10,15 @@
 #      node-addon-require-builtin).
 #   5. session-persistence-jsonl publishes logs with a hard link(), which
 #      Android forbids (EACCES); rename() is equally atomic and works.
+#   6. attachment-local fsyncs every ancestor directory up to "/" (the
+#      untrusted_app SELinux domain cannot open("/data/data")) and also
+#      publishes attachments with link(), which Android forbids; the walk
+#      now tolerates unopenable ancestors and publication falls back to
+#      rename(). Without this, read_image cannot store an image.
+#   7. fs-local publishes a NEW file with link() (no-replace semantics);
+#      Android refuses link() too, so every create-file write fails with
+#      FS_IO_ERROR. Publication falls back to rename(); the surrounding
+#      guard still refuses to overwrite an existing file.
 
 set -euo pipefail
 
@@ -52,7 +61,7 @@ find_deepseek_key() {
     return 1
 }
 
-log 1 7 "Installing prerequisites..."
+log 1 9 "Installing prerequisites..."
 pkg install -y nodejs build-essential clang cmake ninja python libvips >/dev/null
 
 # Resolve Node/npm paths only now that nodejs is installed — before, on a
@@ -74,7 +83,7 @@ if [ ! -f "$NODE_GYP_BIN" ]; then
     exit 1
 fi
 
-log 2 7 "Patching node-gyp (drop bogus OS=android)..."
+log 2 9 "Patching node-gyp (drop bogus OS=android)..."
 CREATE_GYPI="$(npm root -g)/npm/node_modules/node-gyp/lib/create-config-gypi.js"
 if [ ! -f "$CREATE_GYPI" ]; then
     echo "error: node-gyp not found at $CREATE_GYPI" >&2
@@ -103,12 +112,12 @@ print("    patched", path)
 PY
 fi
 
-log 3 7 "Installing @deepseek-ai/dsh (native modules will be compiled)..."
+log 3 9 "Installing @deepseek-ai/dsh (native modules will be compiled)..."
 export CFLAGS="--target=$NDK_TARGET"
 export CXXFLAGS="--target=$NDK_TARGET"
 npm install -g @deepseek-ai/dsh
 
-log 4 7 "Building sharp against system libvips..."
+log 4 9 "Building sharp against system libvips..."
 SHARP_DIR="$DSH_LIB/node_modules/sharp"
 if [ -f "$SHARP_DIR/src/build/Release/sharp-android-arm64-"*.node ]; then
     echo "    sharp already built, skipping."
@@ -118,7 +127,7 @@ else
         "$NODE_BIN" "$NODE_GYP_BIN" rebuild --directory=src >/dev/null)
 fi
 
-log 5 7 "Patching session persistence (hard link -> rename)..."
+log 5 9 "Patching session persistence (hard link -> rename)..."
 SESSION_JS="$DSH_LIB/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js"
 if [ -f "$SESSION_JS" ]; then
     if grep -q "await rename(tmp, finalPath)" "$SESSION_JS"; then
@@ -144,7 +153,88 @@ else
     echo "    warning: session persistence module not found, skipping."
 fi
 
-log 6 7 "Fixing shebang (node --expose-internals)..."
+log 6 9 "Patching attachment store (durability walk + hard link fallback)..."
+ATTACH_JS="$DSH_LIB/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js"
+if [ ! -f "$ATTACH_JS" ]; then
+    echo "    warning: attachment module not found, skipping (read_image will not work)."
+elif grep -q "termux-hardlink-fallback" "$ATTACH_JS"; then
+    echo "    attachment store already patched, skipping."
+else
+    python3 - "$ATTACH_JS" <<'PY'
+import sys
+
+path = sys.argv[1]
+src = open(path, encoding="utf-8").read()
+
+if "termux-hardlink-fallback" in src:
+    print("    already patched")
+    sys.exit(0)
+
+
+def once(old, new):
+    global src
+    assert src.count(old) == 1, "patch anchor not found (%d matches); dsh may have changed" % src.count(old)
+    src = src.replace(old, new, 1)
+
+
+# (a) The durability walk fsyncs every ancestor up to the filesystem root, but
+#     an untrusted Android app cannot open("/"), "/data" or "/data/data".
+once(
+    "\tconst handle = await open(path, constants.O_RDONLY);",
+    "\tlet handle;\n"
+    "\ttry {\n"
+    "\t\thandle = await open(path, constants.O_RDONLY);\n"
+    "\t} catch (error) {\n"
+    "\t\t/* termux-durability-guard */\n"
+    "\t\tif (error.code === \"EACCES\" || error.code === \"EPERM\" || error.code === \"ENOENT\") return;\n"
+    "\t\tthrow error;\n"
+    "\t}",
+)
+
+# (b) Publication uses link(), which Android refuses (EACCES); rename() inside
+#     the same private root is equally atomic. (c) rename() consumes the
+#     staging name, so the follow-up unlink() must tolerate ENOENT.
+helpers = (
+    "/**\n"
+    " * Publish one staged object into place.\n"
+    " * POSIX links are the cheapest atomic publish, but Android refuses link()\n"
+    " * for untrusted apps (EACCES: no hard links). rename() inside the same\n"
+    " * private root is equally atomic, so fall back to it. rename() replaces an\n"
+    " * existing target instead of raising EEXIST, which is safe here because\n"
+    " * targets are content-addressed: an object already at `target` holds the\n"
+    " * same digest as the bytes being published.\n"
+    " */\n"
+    "/* termux-hardlink-fallback */\n"
+    "async function publishStagedName(source, target) {\n"
+    "\ttry {\n"
+    "\t\tawait link(source, target);\n"
+    "\t} catch (error) {\n"
+    "\t\tif (!(error instanceof Error && \"code\" in error && error.code === \"EACCES\")) throw error;\n"
+    "\t\tawait rename(source, target);\n"
+    "\t}\n"
+    "}\n"
+    "/** Remove a staging name, tolerating one already consumed by the rename fallback. */\n"
+    "async function removeStagedName(path) {\n"
+    "\ttry {\n"
+    "\t\tawait unlink(path);\n"
+    "\t} catch (error) {\n"
+    "\t\tif (!(error instanceof Error && \"code\" in error && error.code === \"ENOENT\")) throw error;\n"
+    "\t}\n"
+    "}\n"
+    "async function publishStagedObject(root, target, staged) {"
+)
+once("async function publishStagedObject(root, target, staged) {", helpers)
+once("\t\t\tawait link(staged.path, target);", "\t\t\tawait publishStagedName(staged.path, target);")
+once("\t\t\tawait link(source, target);", "\t\t\tawait publishStagedName(source, target);")
+assert src.count("\t\tawait unlink(staged.path);") == 1, "staging unlink anchor not found"
+src = src.replace("\t\tawait unlink(staged.path);", "\t\tawait removeStagedName(staged.path);")
+
+open(path, "w", encoding="utf-8").write(src)
+print("    patched", path)
+PY
+fi
+
+log 7 9 "Fixing shebang (node --expose-internals)..."
 DSH_BIN="$DSH_LIB/lib/bin.js"
 if [ -f "$DSH_BIN" ]; then
     python3 - "$DSH_BIN" "$NODE_BIN" <<'PY'
@@ -160,7 +250,50 @@ print("    shebang set:", node, "--expose-internals")
 PY
 fi
 
-log 7 7 "Setting DeepSeek API key..."
+log 8 9 "Patching file publication (hard link -> rename fallback)..."
+FS_LOCAL_JS="$DSH_LIB/node_modules/@deepseek-ai/dsh-fs-local/lib/index.js"
+if [ ! -f "$FS_LOCAL_JS" ]; then
+    echo "    warning: fs-local module not found, skipping (write/edit tools will not work)."
+elif grep -q "termux-noreplace-fallback" "$FS_LOCAL_JS"; then
+    echo "    file publication already patched, skipping."
+else
+    python3 - "$FS_LOCAL_JS" <<'PY'
+import sys
+
+path = sys.argv[1]
+src = open(path, encoding="utf-8").read()
+
+if "termux-noreplace-fallback" in src:
+    print("    already patched")
+    sys.exit(0)
+
+old = (
+    "\t\tif (createIfAbsent !== void 0) try {\n"
+    "\t\t\tawait linkFile(tempPath, absolutePath);\n"
+    "\t\t} catch (error) {\n"
+    "\t\t\tawait throwGuardedCreateFailure(error, absolutePath, createIfAbsent.displayPath, inspectPublicationTarget);\n"
+    "\t\t}"
+)
+assert src.count(old) == 1, "patch anchor not found (%d matches); dsh may have changed" % src.count(old)
+new = (
+    "\t\tif (createIfAbsent !== void 0) try {\n"
+    "\t\t\ttry {\n"
+    "\t\t\t\tawait linkFile(tempPath, absolutePath);\n"
+    "\t\t\t} catch (error) {\n"
+    "\t\t\t\t/* termux-noreplace-fallback */\n"
+    "\t\t\t\tif (!(error instanceof Error && \"code\" in error && error.code === \"EACCES\")) throw error;\n"
+    "\t\t\t\tawait rename(tempPath, absolutePath);\n"
+    "\t\t\t}\n"
+    "\t\t} catch (error) {\n"
+    "\t\t\tawait throwGuardedCreateFailure(error, absolutePath, createIfAbsent.displayPath, inspectPublicationTarget);\n"
+    "\t\t}"
+)
+open(path, "w", encoding="utf-8").write(src.replace(old, new, 1))
+print("    patched", path)
+PY
+fi
+
+log 9 9 "Setting DeepSeek API key..."
 PERSIST_KEY=""
 if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
     echo "    DEEPSEEK_API_KEY already set in environment, using it."
