@@ -1,0 +1,17 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Bash syntax (bash -n)
+        run: bash -n install.sh
+      - name: shellcheck
+        run: shellcheck -S warning install.sh
+      - name: Installer structural checks
+        run: python3 .github/check-install.py

@@ -8,7 +8,7 @@ One-command installer for [DeepSeek's `@deepseek-ai/dsh`](https://www.npmjs.com/
 
 ## Why this exists
 
-`npm install -g @deepseek-ai/dsh` installs but does not run on Termux. Five
+`npm install -g @deepseek-ai/dsh` installs but does not run on Termux. Seven
 independent incompatibilities have to be fixed:
 
 | # | Package / feature | Problem | Fix |
@@ -18,6 +18,8 @@ independent incompatibilities have to be fixed:
 | 3 | `sharp` | No prebuilt binding for `android-arm64`. | Install system `libvips` and build sharp against it. |
 | 4 | HMR service | `cordis-plugin-hmr` needs Node `--expose-internals`; `node-addon-require-builtin` has no android prebuild. | Rewrite the `dsh` shebang to `node --expose-internals`. |
 | 5 | `session-persistence-jsonl` | Publishes logs with a hard `link()`, forbidden on Android (`EACCES`). | Switch the atomic publish to `rename()`. |
+| 6 | `attachment-local` | Fsyncs every ancestor directory up to `/` for crash durability, but the `untrusted_app` SELinux domain cannot `open("/data/data")`; publishing also uses `link()`. | Tolerate unopenable ancestors and fall back to `rename()`. Without this, `read_image` cannot store an image. |
+| 7 | `fs-local` | The `write`/`edit` tools publish a **new** file with `link()` (no-replace semantics), which Android also refuses (`EACCES`). | Fall back to `rename()`; the guard still refuses to overwrite an existing file. Without this, every create-file write fails. |
 
 ## Install
 
@@ -58,8 +60,10 @@ web UI's Models page).
 3. Installs `@deepseek-ai/dsh` globally with `CFLAGS`/`CXXFLAGS` targeting `android30`.
 4. Builds `sharp` against the system `libvips`.
 5. Patches `session-persistence-jsonl` to use `rename()` instead of `link()`.
-6. Rewrites the `dsh` shebang to `node --expose-internals`.
-7. Prompts you to paste your `DEEPSEEK_API_KEY` (input hidden), saves it to
+6. Patches `attachment-local` (ancestor-fsync tolerance + `link()` fallback).
+7. Patches `fs-local` so new files are published without `link()`.
+8. Rewrites the `dsh` shebang to `node --expose-internals`.
+9. Prompts you to paste your `DEEPSEEK_API_KEY` (input hidden), saves it to
    `~/.bashrc`, and exports it for the current shell. If you press Enter with
    nothing, it falls back to scanning for an existing key (env, dsh's
    credentials store, shell rc files).
