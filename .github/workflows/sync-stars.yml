@@ -1,0 +1,16 @@
+name: sync stars
+
+# 星数自动同步 —— 逻辑在 lilyco-42/.github 的 reusable workflow 里，这里只做定时触发。
+# 每天 11:17（GMT+8）跑一次，只有 ★N 与实际星数不一致时才会产生提交。
+# 想立刻同步：Actions → sync stars → Run workflow。
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    permissions:
+      contents: write
+    uses: lilyco-42/.github/.github/workflows/lyco-sync-stars.yml@main
