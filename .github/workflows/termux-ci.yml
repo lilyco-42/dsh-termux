@@ -1,0 +1,71 @@
+name: Termux CI
+
+# dsh-termux 的安装脚本只能运行在真机 Termux 上，GitHub 托管 runner 不是 Termux。
+# 这里把能在 CI 上验证的部分做实：Bash 语法、shellcheck、安装脚本结构契约，
+# 以及三项核心补丁（link->rename / require-builtin shim / flock 兜底 / rename import）
+# 的正确性与幂等性仿真。真正的一键安装冒烟仍需 Termux 设备本地执行 install.sh。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - ".github/check-install.py"
+      - ".github/test-patches.py"
+      - ".github/workflows/termux-ci.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: termux-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: shell lint + structural contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Bash syntax
+        run: bash -n install.sh
+
+      - name: shellcheck (warning+)
+        run: shellcheck -S warning install.sh
+
+      - name: Installer structural checks
+        run: python3 .github/check-install.py
+
+      - name: DCO sign-off on all commits
+        if: github.event_name == 'pull_request'
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          missing=0
+          for c in $(git rev-list "$base..$head"); do
+            if ! git log -1 --format='%(trailers:key=Signed-off-by)' "$c" | grep -q .; then
+              echo "::error::commit $c is missing Signed-off-by (DCO 1.1)"
+              missing=1
+            fi
+          done
+          test "$missing" -eq 0
+
+  patches:
+    name: patch correctness + idempotency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # 从 install.sh 抽取内嵌 Python 补丁块，在模拟 npm 包文件上执行：
+      # 验证补丁仍能命中预期源码结构、结果正确、且重复执行幂等。
+      - name: Simulate embedded patches
+        run: python3 .github/test-patches.py

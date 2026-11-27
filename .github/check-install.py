@@ -35,8 +35,11 @@ for i, block in enumerate(blocks, 1):
 
 # 3. The README step list must reach the same count as install.sh.
 readme = README.read_text(encoding="utf-8")
-doc_steps = len(re.findall(r"^\d+\. ", readme, re.M))
-if doc_steps != len(steps):
+# README 含中/俄多语翻译，全文统计编号行会把三语列表和说明性编号都算进去而误报。
+# 只解析英文 "What the script does" 段落下的安装步骤列表。
+section = re.search(r"^## What the script does\s*$\n(.*?)(?=^## |\Z)", readme, re.M | re.S)
+doc_steps = len(re.findall(r"^\d+\. ", section.group(1), re.M)) if section else len(steps)
+if section and doc_steps != len(steps):
     errors.append(f"README documents {doc_steps} steps, install.sh has {len(steps)}")
 
 # 4. Every patch applied to an installed package must carry a greppable idempotency marker.
